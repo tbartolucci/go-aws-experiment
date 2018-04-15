@@ -1,16 +1,36 @@
-package go_aws
+package main
 
 import (
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/aws"
-	"strings"
+	"log"
+	"os"
+
+	"github.com/jinzhu/gorm"
+	_ "github.com/jinzhu/gorm/dialects/sqlite"
 )
 
+var db *gorm.DB
+var err error
+
 func main() {
-	client := s3.New(nil) //use AWS_REGION
-	result, err := client.PutObject(&s3.PutObjectInput{
-		Bucket: aws.String("MyBucketName"),
-		Key: aws.String("hello.txt"),
-		Body: strings.NewReader("Hello, cloud!"),
-	})
+
+	db, err = gorm.Open("sqlite3", "./gorm.db")
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	db.LogMode(true)
+	db.AutoMigrate(&user{}, &comment{}, &photo{}, &follower{})
+
+	r := registerRoutes()
+
+	port := os.Getenv("PORT")
+
+	if port == "" {
+		port = "5000"
+	}
+
+	log.Printf("Listening on port %s\n", port)
+	r.Run(":" + port)
 }
