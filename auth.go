@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
@@ -11,10 +12,28 @@ import (
 // the user is redirected to /signup.
 func AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		s := sessions.Default(c)
-		uid := s.Get(userKey)
+		log.Info("AuthRequired()")
 
-		if uid == nil {
+		s := sessions.Default(c)
+		jwt := s.Get(accessToken)
+
+		if jwt == nil {
+			log.Error("Access token not found in session")
+			c.Redirect(http.StatusFound, "/signup")
+			return
+		}
+
+		cog := NewCognito()
+		sub, err := cog.ValidateToken(jwt.(string))
+
+		if err != nil {
+			log.Error("Error validating token: ", err)
+			c.Redirect(http.StatusFound, "/signup")
+			return
+		}
+
+		if sub == "" {
+			log.Error("sub not found: ", err)
 			c.Redirect(http.StatusFound, "/signup")
 			return
 		}

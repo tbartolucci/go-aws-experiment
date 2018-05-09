@@ -2,18 +2,18 @@ package main
 
 import (
 	"errors"
-	"log"
 	"net/http"
-	"strconv"
 
-	"golang.org/x/crypto/bcrypt"
-
+	log "github.com/Sirupsen/logrus"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
+	"strconv"
 )
 
 type user struct {
-	ID       uint
+	ID       string
 	Email    string
 	Username string
 	Password string
@@ -21,11 +21,12 @@ type user struct {
 }
 
 type follower struct {
-	UserID     uint `gorm:"unique_index:idx_user_follower"`
-	FollowerID uint `gorm:"unique_index:idx_user_follower"`
+	UserID     string `gorm:"unique_index:idx_user_follower"`
+	FollowerID string `gorm:"unique_index:idx_user_follower"`
 }
 
 const userKey = "userid"
+const accessToken = "accessToken"
 
 func loginForm(c *gin.Context) {
 	session := sessions.Default(c)
@@ -38,7 +39,7 @@ func loginForm(c *gin.Context) {
 
 func login(c *gin.Context) {
 	username := c.PostForm("username")
-	password := []byte(c.PostForm("password"))
+	password := c.PostForm("password")
 	u := &user{}
 	session := sessions.Default(c)
 
@@ -55,19 +56,27 @@ func login(c *gin.Context) {
 			"user":  u,
 		})
 	} else {
-		if bcrypt.CompareHashAndPassword([]byte(u.Password), password) != nil {
-			session.AddFlash("Bad password")
+		log.Info("Authenticating via Cognito: ", username)
+		cog := NewCognito()
+		jwt, err := cog.SignIn(username, password)
+
+		if err != nil {
+			msg := err.(awserr.Error).Message()
+			log.Error("Signin Error: ", msg)
+			session.AddFlash(msg)
 			session.Save()
 			c.HTML(http.StatusOK, "login.html", gin.H{
 				"flash": session.Flashes(),
-				"user":  u,
+				"user": u,
 			})
 		} else {
-			log.Println("Saving user in session:", u.Username)
-			session.Set(userKey, u.ID)
+			log.Info("Authentication Succesful")
+			sub, _ := cog.ValidateToken(jwt)
+			session.Set(accessToken, jwt)
+			session.Set(userKey, sub)
 			session.Save()
-			u := session.Get(userKey)
-			log.Println("Testing user in session:", u)
+			t := session.Get(accessToken)
+			log.Info("Testing user in session: ", t)
 			c.Redirect(http.StatusFound, "/photos")
 		}
 	}
@@ -81,15 +90,10 @@ func signupForm(c *gin.Context) {
 }
 
 func signup(c *gin.Context) {
-
-	password := []byte(c.PostForm("password"))
-	hashedPassword, _ := bcrypt.GenerateFromPassword(password, bcrypt.DefaultCost)
-
 	user := &user{
 		FullName: c.PostForm("fullName"),
 		Username: c.PostForm("username"),
-		Email:    c.PostForm("email"),
-		Password: string(hashedPassword),
+		Email: c.PostForm("email"),
 	}
 
 	session := sessions.Default(c)
@@ -101,24 +105,45 @@ func signup(c *gin.Context) {
 		session.AddFlash(msg)
 		c.HTML(http.StatusOK, "signup.html", gin.H{
 			"flash": session.Flashes(),
-			"user":  user,
+			"user": user,
 		})
 		session.Save()
 		return
 	}
 
-	log.Println("Creating DB user:", user.Username)
+	cog := NewCognito()
+	password := c.PostForm("password")
+	jwt, err := cog.SignUp(user.Username, password, user.Email, user.FullName)
+
+	if err != nil {
+		msg := err.(awserr.Error).Message()
+		log.Error("SignUp error: ", msg)
+		session.AddFlash(msg)
+		c.HTML(http.StatusOK, "signup.html", gin.H{
+			"flash": session.Flashes(),
+			"user": user,
+		})
+		session.Save()
+		return
+	}
+
+	log.Info("Creating DB user:", user.Username)
+
+	sub, err := cog.ValidateToken(jwt)
+
+	user.ID = sub // Set user ID to Cognito UUID
 
 	if err := db.Create(user); err.Error != nil {
-		log.Println("Error:", err.Error)
+		log.Error("Error: ", err.Error)
 		session.AddFlash(err.Error)
 		c.HTML(http.StatusOK, "signup.html", gin.H{
 			"flash": session.Flashes(),
-			"user":  user,
+			"user": user,
 		})
 	} else {
-		log.Println("Saving user in session:", user.Username)
+		log.Info("Saving userid in session for: ", user.Username)
 		session.Set(userKey, user.ID)
+		session.Set(accessToken, jwt)
 		session.Save()
 		c.Redirect(http.StatusFound, "/photos")
 	}

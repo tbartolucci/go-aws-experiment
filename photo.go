@@ -24,7 +24,7 @@ import (
 
 type photo struct {
 	ID        uint
-	UserID    uint
+	UserID    string `sql:"type:varchar(36);primary key"` // Cognito UUID
 	Filename  string
 	Caption   string
 	CreatedAt time.Time
