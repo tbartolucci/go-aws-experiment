@@ -1,0 +1,11 @@
+[aws]
+region = "us-east-1"
+
+
+[cognito]
+userPoolID = "us-east-1_Q33ENQoRl"
+clientID = "7to39u1ahcsnl3m2pd5pk1j5if"
+jwksURL = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_Q33ENQoRl/.well-known/jwks.json"
+
+[s3]
+bucketName = "bitsbybit-pluralsight-photos"

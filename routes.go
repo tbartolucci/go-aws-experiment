@@ -57,7 +57,7 @@ func home(c *gin.Context) {
 
 	if u != nil {
 		log.Printf("user: %v\n", u)
-		user, err := findUserByID(u.(uint))
+		user, err := findUserByID(u.(string))
 
 		if err != nil {
 			log.Println("Error getting user:", err.Error())

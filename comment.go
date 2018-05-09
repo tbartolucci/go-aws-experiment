@@ -7,14 +7,14 @@ import (
 
 type comment struct {
 	ID        uint
-	UserID    uint
+	UserID    string
 	PhotoID   uint
 	Text      string
 	CreatedAt time.Time
 }
 
 // InsertComment inserts a comment record
-func InsertComment(photoid, userid uint, text string) (uint, error) {
+func InsertComment(photoid uint, userid string, text string) (uint, error) {
 	comment := &comment{
 		Text:      text,
 		PhotoID:   photoid,

@@ -13,6 +13,7 @@ INSERT INTO "users" ("email","username","password","full_name") VALUES ('jwest@e
 INSERT INTO "users" ("email","username","password","full_name") VALUES ('smartin@example.com','smartin','$2a$10$qamAkp1l4dD4pK4zQlaHJumbhZFdC2ZWNvfw.4aNsql1JbKF3vx2S','Shirley Martin');
 INSERT INTO "users" ("email","username","password","full_name") VALUES ('lallen@example.com','lallen','$2a$10$qamAkp1l4dD4pK4zQlaHJumbhZFdC2ZWNvfw.4aNsql1JbKF3vx2S','Larry Allen');
 INSERT INTO "users" ("email","username","password","full_name") VALUES ('sgibson@example.com','sgibson','$2a$10$qamAkp1l4dD4pK4zQlaHJumbhZFdC2ZWNvfw.4aNsql1JbKF3vx2S','Sarah Gibson');
+INSERT INTO "users" ("email","username","password","full_name") VALUES ('tbartolucci@gmail.com','tbartolucci','$2a$10$qamAkp1l4dD4pK4zQlaHJumbhZFdC2ZWNvfw.4aNsql1JbKF3vx2S','Thomas Bartolucci');
 
 -- create followers
 

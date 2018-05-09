@@ -21,13 +21,6 @@ import (
 	awsSession "github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"os"
-	"image"
-	"image/png"
-	"image/gif"
-	"strings"
-	"bufio"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager/s3manageriface"
 )
 
 type photo struct {
@@ -44,11 +37,12 @@ const thumbnailSize uint = 600
 var bucketName string
 
 func init() {
+
 	log.Info("Initializing S3")
 
-	log.Info("Loading Configuration")
-	viper.SetConfigName("config")
-	viper.AddConfigPath(".")
+	log.Info("Loading configuration")
+	viper.SetConfigName("config") // config.toml
+	viper.AddConfigPath(".")      // use working directory
 
 	if err := viper.ReadInConfig(); err != nil {
 		log.Errorf("error reading config file, %v", err)
@@ -56,6 +50,7 @@ func init() {
 	}
 
 	bucketName = viper.GetString("s3.bucketName")
+
 	log.Info("S3 bucket: ", bucketName)
 }
 
@@ -69,16 +64,16 @@ func FetchAllPhotos(c *gin.Context) {
 		return
 	}
 
-	user, err := findUserByID(uid.(uint))
+	user, err := findUserByID(uid.(string))
 
 	if err != nil {
-		log.Println("Could not find user:", err)
+		log.Error("Could not find user:", err)
 	}
 
 	photos := []photo{}
 	db.Order("id desc").Find(&photos)
 
-	currentUser, _ := findUserByID(uid.(uint))
+	currentUser, _ := findUserByID(uid.(string))
 
 	c.HTML(http.StatusOK, "photos.html", gin.H{
 		"user":        user,
@@ -106,14 +101,14 @@ func FetchSinglePhoto(c *gin.Context) {
 	user, err := findUserByID(photo.UserID)
 
 	if err != nil {
-		log.Println("Could not find user:", err)
+		log.Error("Could not find user:", err)
 	}
 
 	// Load comments
 	comments := []comment{}
 	db.Where("photo_id = ?", id).Find(&comments)
 
-	currentUser, _ := findUserByID(uid.(uint))
+	currentUser, _ := findUserByID(uid.(string))
 
 	c.HTML(http.StatusOK, "photo.html", gin.H{
 		"user":        user,
@@ -156,15 +151,17 @@ func CreatePhoto(c *gin.Context) {
 	caption := form.Value["caption"][0]
 	log.Info("Caption:", caption)
 
+	// Upload file to S3 bucket
+
 	sess := awsSession.Must(awsSession.NewSession())
 	uploader := s3manager.NewUploader(sess)
 
-	key := sub + "/" + header.Filename // create a unique name by prepending the user uuid
+	key := sub + "/" + header.Filename
 
 	_, err = uploader.Upload(&s3manager.UploadInput{
-		Bucket: aws.String(bucketName),
-		Key: aws.String(key),
-		Body: file,
+		Bucket:      aws.String(bucketName),
+		Key:         aws.String(key),
+		Body:        file,
 		ContentType: aws.String(mime.TypeByExtension(filepath.Ext(header.Filename))),
 	})
 
@@ -176,6 +173,8 @@ func CreatePhoto(c *gin.Context) {
 
 	log.Info("Uploaded file:", header.Filename)
 
+	// Insert DB record for photo and user
+
 	photoid, err := insertPhoto(sub, header.Filename, caption)
 
 	if err != nil {
@@ -183,12 +182,9 @@ func CreatePhoto(c *gin.Context) {
 		return
 	}
 
-	err = generateThumbnail(sess, sub, header.Filename, key, thumbnailSize)
+	// Generate thumbnail
 
-	if err != nil {
-		c.String(http.StatusBadRequest, fmt.Sprintf("Error generating thumbnail: %s", err.Error()))
-		return
-	}
+	err = generateThumbnail(sess, sub, header.Filename, key, thumbnailSize)
 
 	if err != nil {
 		c.String(http.StatusBadRequest, fmt.Sprintf("Error generating thumbnail: %s", err.Error()))
@@ -209,7 +205,7 @@ func DeletePhoto(c *gin.Context) {
 	var p photo
 
 	if err := db.Where("id = ?", id).Delete(&p).Error; err != nil {
-		log.Println("Error deleting photo:", err)
+		log.Error("Error deleting photo:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err})
 		return
 	}
@@ -226,7 +222,7 @@ func LikePhoto(c *gin.Context) {
 	photo.Likes++
 
 	if err := db.Save(photo); err.Error != nil {
-		log.Println("Error updating photo:", err.Error)
+		log.Error("Error updating photo:", err.Error)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"likes": photo.Likes})
@@ -242,29 +238,29 @@ func CommentPhoto(c *gin.Context) {
 	}
 
 	if err := c.BindJSON(&comment); err != nil {
-		log.Println("BindJSON error:", err.Error())
+		log.Error("BindJSON error:", err.Error())
 	}
 
 	log.Printf("Comment: %v\n", comment.Comment)
 
 	session := sessions.Default(c)
 	uid := session.Get(userKey)
-	id, err := InsertComment(uint(photoid), uid.(uint), comment.Comment)
+	id, err := InsertComment(uint(photoid), uid.(string), comment.Comment)
 
 	if err != nil {
-		log.Println("Error inserting comment:", err.Error())
+		log.Error("Error inserting comment:", err.Error())
 	}
 
-	user, _ := findUserByID(uid.(uint))
+	user, _ := findUserByID(uid.(string))
 
 	c.JSON(http.StatusOK, gin.H{"id": id, "username": user.Username})
 }
 
 // Insert photo record into database
-func insertPhoto(sub string, fn string, caption string) (uint, error) {
+func insertPhoto(uid string, fn string, caption string) (uint, error) {
 
 	photo := &photo{
-		UserID:    sub,
+		UserID:    uid,
 		Filename:  fn,
 		Caption:   caption,
 		CreatedAt: time.Now(),
@@ -274,7 +270,7 @@ func insertPhoto(sub string, fn string, caption string) (uint, error) {
 		return 0, err.Error
 	}
 
-	log.Println("Inserted photo record:", photo.ID)
+	log.Info("Inserted photo record:", photo.ID)
 
 	return photo.ID, nil
 }
@@ -287,7 +283,7 @@ func generateThumbnail(sess *awsSession.Session, sub string, filename string, ke
 	s3dl := s3manager.NewDownloader(sess)
 	_, err := s3dl.Download(buff, &s3.GetObjectInput{
 		Bucket: aws.String(bucketName),
-		Key: aws.String(key),
+		Key:    aws.String(key),
 	})
 
 	if err != nil {
@@ -305,7 +301,6 @@ func generateThumbnail(sess *awsSession.Session, sub string, filename string, ke
 	}
 
 	log.Infof("Generating thumbnail")
-
 	thumbnail := resize.Thumbnail(maxWidth, maxWidth, img, resize.Lanczos3)
 
 	log.Infof("Encoding image for upload to S3")
@@ -318,13 +313,14 @@ func generateThumbnail(sess *awsSession.Session, sub string, filename string, ke
 	}
 
 	thumbkey := sub + "/thumb/" + filename
+
 	log.Infof("Preparing S3 object: %s", thumbkey)
 
 	uploader := s3manager.NewUploader(sess)
 	result, err := uploader.Upload(&s3manager.UploadInput{
-		Body: bytes.NewReader(buf.Bytes()),
-		Bucket: aws.String(bucketName),
-		Key: aws.String(thumbkey),
+		Body:        bytes.NewReader(buf.Bytes()),
+		Bucket:      aws.String(bucketName),
+		Key:         aws.String(thumbkey),
 		ContentType: aws.String(mime.TypeByExtension(filepath.Ext(filename))),
 	})
 
@@ -336,16 +332,6 @@ func generateThumbnail(sess *awsSession.Session, sub string, filename string, ke
 	log.Println("Successfully uploaded to", result.Location)
 
 	return nil
-}
-
-// Detect image file format (i.e. jpeg, png, gif)
-func decodeConfig(filename string) (image.Config, string, error) {
-	f, err := os.Open(filename)
-	if err != nil {
-		return image.Config{}, "", err
-	}
-	defer f.Close()
-	return image.DecodeConfig(bufio.NewReader(f))
 }
 
 func (p *photo) TimeAgo() string {

@@ -8,15 +8,12 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
-	"golang.org/x/crypto/bcrypt"
-	"strconv"
 )
 
 type user struct {
-	ID       string
+	ID       string `sql:"type:varchar(36);primary key"` // Cognito UUID
 	Email    string
 	Username string
-	Password string
 	FullName string
 }
 
@@ -67,16 +64,16 @@ func login(c *gin.Context) {
 			session.Save()
 			c.HTML(http.StatusOK, "login.html", gin.H{
 				"flash": session.Flashes(),
-				"user": u,
+				"user":  u,
 			})
 		} else {
-			log.Info("Authentication Succesful")
+			log.Info("Authentication successful")
 			sub, _ := cog.ValidateToken(jwt)
 			session.Set(accessToken, jwt)
 			session.Set(userKey, sub)
 			session.Save()
 			t := session.Get(accessToken)
-			log.Info("Testing user in session: ", t)
+			log.Info("Testing user in session:", t)
 			c.Redirect(http.StatusFound, "/photos")
 		}
 	}
@@ -93,7 +90,7 @@ func signup(c *gin.Context) {
 	user := &user{
 		FullName: c.PostForm("fullName"),
 		Username: c.PostForm("username"),
-		Email: c.PostForm("email"),
+		Email:    c.PostForm("email"),
 	}
 
 	session := sessions.Default(c)
@@ -105,7 +102,7 @@ func signup(c *gin.Context) {
 		session.AddFlash(msg)
 		c.HTML(http.StatusOK, "signup.html", gin.H{
 			"flash": session.Flashes(),
-			"user": user,
+			"user":  user,
 		})
 		session.Save()
 		return
@@ -121,7 +118,7 @@ func signup(c *gin.Context) {
 		session.AddFlash(msg)
 		c.HTML(http.StatusOK, "signup.html", gin.H{
 			"flash": session.Flashes(),
-			"user": user,
+			"user":  user,
 		})
 		session.Save()
 		return
@@ -131,14 +128,20 @@ func signup(c *gin.Context) {
 
 	sub, err := cog.ValidateToken(jwt)
 
+	if err != nil {
+		return
+	}
+
+	log.Info("Cognito 'sub': ", sub)
+
 	user.ID = sub // Set user ID to Cognito UUID
 
 	if err := db.Create(user); err.Error != nil {
-		log.Error("Error: ", err.Error)
+		log.Error("Error:", err.Error)
 		session.AddFlash(err.Error)
 		c.HTML(http.StatusOK, "signup.html", gin.H{
 			"flash": session.Flashes(),
-			"user": user,
+			"user":  user,
 		})
 	} else {
 		log.Info("Saving userid in session for: ", user.Username)
@@ -165,7 +168,7 @@ func Profile(c *gin.Context) {
 	user := &user{Username: c.Params.ByName("username")}
 
 	if err := db.Where(&user).First(&user); err.Error != nil {
-		log.Println("Error:", err.Error)
+		log.Error("Error:", err.Error)
 		c.HTML(http.StatusOK, "404.html", nil)
 		return
 	}
@@ -173,14 +176,14 @@ func Profile(c *gin.Context) {
 	photos := []photo{}
 
 	if err := db.Where("user_id = ?", user.ID).Order("id desc").Find(&photos); err.Error != nil {
-		log.Println("Error:", err.Error)
+		log.Error("Error:", err.Error)
 		c.HTML(http.StatusOK, "404.html", nil)
 		return
 	}
 
 	session := sessions.Default(c)
 	uid := session.Get(userKey)
-	currentUser, _ := findUserByID(uid.(uint))
+	currentUser, _ := findUserByID(uid.(string))
 
 	c.HTML(http.StatusOK, "user.html", gin.H{
 		"user":        user,
@@ -200,14 +203,14 @@ func findUserByUsername(username string) (*user, error) {
 	return u, nil
 }
 
-func findUserByID(id uint) (*user, error) {
+func findUserByID(id string) (*user, error) {
 	u := &user{}
 
 	if err := db.Where("id = ?", id).First(&u); err.Error != nil {
 		return nil, err.Error
 	}
 
-	if u.ID == 0 {
+	if u.ID == "" {
 		return nil, errors.New("User not found")
 	}
 
@@ -220,7 +223,7 @@ func (u *user) PhotoCount() uint {
 	var count uint
 
 	if err := db.Where("user_id = ?", u.ID).Find(&photos).Count(&count); err.Error != nil {
-		log.Println("Error:", err.Error)
+		log.Error("Error:", err.Error)
 	}
 
 	return count
@@ -230,15 +233,15 @@ func (u *user) PhotoCount() uint {
 func Follow(c *gin.Context) {
 	session := sessions.Default(c)
 	uid := session.Get(userKey)
-	fid, _ := strconv.ParseUint(c.Params.ByName("id"), 10, 64)
+	fid := c.Params.ByName("id")
 
 	follower := &follower{
-		UserID:     uint(fid),
-		FollowerID: uid.(uint),
+		UserID:     fid,
+		FollowerID: uid.(string),
 	}
 
 	if err := db.Create(follower); err.Error != nil {
-		log.Println("Error:", err.Error)
+		log.Error("Error:", err.Error)
 	}
 
 	c.JSON(http.StatusOK, nil)
@@ -248,15 +251,15 @@ func Follow(c *gin.Context) {
 func Unfollow(c *gin.Context) {
 	session := sessions.Default(c)
 	uid := session.Get(userKey)
-	fid, _ := strconv.ParseUint(c.Params.ByName("id"), 10, 64)
+	fid := c.Params.ByName("id")
 
 	follower := &follower{
-		UserID:     uint(fid),
-		FollowerID: uid.(uint),
+		UserID:     fid,
+		FollowerID: uid.(string),
 	}
 
 	if err := db.Where(&follower).Delete(follower); err.Error != nil {
-		log.Println("Error:", err.Error)
+		log.Error("Error:", err.Error)
 	}
 
 	c.JSON(http.StatusOK, nil)
@@ -268,7 +271,7 @@ func (u *user) Followers() uint {
 	var count uint
 
 	if err := db.Where("user_id = ?", u.ID).Find(&followers).Count(&count); err.Error != nil {
-		log.Println("Error:", err.Error)
+		log.Error("Error:", err.Error)
 	}
 
 	return count
@@ -280,14 +283,14 @@ func (u *user) Following() uint {
 	var count uint
 
 	if err := db.Where("follower_id = ?", u.ID).Find(&followers).Count(&count); err.Error != nil {
-		log.Println("Error:", err.Error)
+		log.Error("Error:", err.Error)
 	}
 
 	return count
 }
 
 // Follows returns true if the user (u) follows the userid
-func (u *user) Follows(userid uint) bool {
+func (u *user) Follows(userid string) bool {
 
 	follower := &follower{
 		UserID:     userid,
@@ -295,7 +298,7 @@ func (u *user) Follows(userid uint) bool {
 	}
 
 	if err := db.Where(&follower).Find(&follower); err.Error != nil {
-		log.Println("Error:", err.Error)
+		log.Error("Error:", err.Error)
 	}
 
 	return true

@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cognitoidentityprovider"
 	"github.com/spf13/viper"
+	"github.com/aws/aws-sdk-go/aws/credentials"
 )
 
 // Cognito represents an abstraction of the Amazon Cognito identity provider service.
@@ -69,7 +70,10 @@ func NewCognito() *Cognito {
 	c := &Cognito{}
 
 	// Create Session
-	sess := session.Must(session.NewSession())
+	sess := session.Must(session.NewSession(&aws.Config{
+		Region: aws.String("us-east-1"),
+		Credentials: credentials.NewSharedCredentials("", "default"),
+	}))
 	c.cip = cognitoidentityprovider.New(sess)
 
 	return c
@@ -178,6 +182,7 @@ func (c *Cognito) SignIn(username string, password string) (string, error) {
 		log.Error(autherr.Error())
 		return "", autherr
 	}
+	log.Info(authresp)
 
 	accessToken := aws.StringValue(authresp.AuthenticationResult.AccessToken)
 
