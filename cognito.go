@@ -6,14 +6,12 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws/awserr"
-	jwt "github.com/dgrijalva/jwt-go"
+	"github.com/dgrijalva/jwt-go"
 	"github.com/lestrrat/go-jwx/jwk"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cognitoidentityprovider"
 	"github.com/spf13/viper"
-	"github.com/aws/aws-sdk-go/aws/credentials"
 )
 
 // Cognito represents an abstraction of the Amazon Cognito identity provider service.
@@ -70,10 +68,7 @@ func NewCognito() *Cognito {
 	c := &Cognito{}
 
 	// Create Session
-	sess := session.Must(session.NewSession(&aws.Config{
-		Region: aws.String("us-east-1"),
-		Credentials: credentials.NewSharedCredentials("", "default"),
-	}))
+	sess := NewAwsSession()
 	c.cip = cognitoidentityprovider.New(sess)
 
 	return c

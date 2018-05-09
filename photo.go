@@ -153,7 +153,7 @@ func CreatePhoto(c *gin.Context) {
 
 	// Upload file to S3 bucket
 
-	sess := awsSession.Must(awsSession.NewSession())
+	sess := NewAwsSession()
 	uploader := s3manager.NewUploader(sess)
 
 	key := sub + "/" + header.Filename
