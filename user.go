@@ -8,6 +8,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
 
 type user struct {
@@ -41,11 +43,7 @@ func login(c *gin.Context) {
 	session := sessions.Default(c)
 
 	if _, err := findUserByUsername(username); err != nil {
-		if err.RecordNotFound() {
-			session.AddFlash("User not found")
-		} else {
-			session.AddFlash(err.Error)
-		}
+		session.AddFlash(err.Error)
 
 		session.Save()
 		c.HTML(http.StatusOK, "login.html", gin.H{
@@ -194,27 +192,36 @@ func Profile(c *gin.Context) {
 }
 
 func findUserByUsername(username string) (*user, error) {
-	u := &user{}
 
-	if err := db.Where("username = ?", username).First(&u); err.Error != nil {
-		return nil, err.Error
-	}
-
-	return u, nil
+	svc := NewDynamoDb()
+	qo, err := svc.QueryWhereFieldEquals("PhotosAppUsers", "Username", username)
+	return findUserHelper(qo, err)
 }
 
 func findUserByID(id string) (*user, error) {
-	u := &user{}
+	svc := NewDynamoDb()
+	qo, err := svc.QueryWhereFieldEquals("PhotosAppUsers", "ID", id)
+	return findUserHelper(qo, err)
+}
 
-	if err := db.Where("id = ?", id).First(&u); err.Error != nil {
-		return nil, err.Error
+func findUserHelper(qo *dynamodb.QueryOutput, err error) (*user, error) {
+	if err != nil {
+		log.Errorf("FindUserByUsername failed: %v", err)
+		return nil, err
 	}
 
-	if u.ID == "" {
+	users := []user{}
+	if err := dynamodbattribute.UnmarshalListOfMaps(qo.Items, &users); err != nil {
+		log.Errorf("Failed to unmarshal Query result items, %v", err)
+		return nil, err
+	}
+
+	if len(users) == 0 {
+		// Returned no users
 		return nil, errors.New("User not found")
 	}
 
-	return u, nil
+	return &users[0], nil
 }
 
 func (u *user) PhotoCount() uint {
