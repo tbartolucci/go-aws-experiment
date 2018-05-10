@@ -40,7 +40,7 @@ func login(c *gin.Context) {
 	u := &user{}
 	session := sessions.Default(c)
 
-	if err := db.Where("username = ?", username).First(&u); err.Error != nil {
+	if _, err := findUserByUsername(username); err != nil {
 		if err.RecordNotFound() {
 			session.AddFlash("User not found")
 		} else {
