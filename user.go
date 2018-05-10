@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/aws"
 )
 
 type user struct {
@@ -91,18 +92,18 @@ func signup(c *gin.Context) {
 		Email:    c.PostForm("email"),
 	}
 
-	session := sessions.Default(c)
+	sessionStore := sessions.Default(c)
 
 	u, _ := findUserByUsername(user.Username)
 
 	if u != nil {
 		msg := "This username isn't available. Please try another."
-		session.AddFlash(msg)
+		sessionStore.AddFlash(msg)
 		c.HTML(http.StatusOK, "signup.html", gin.H{
-			"flash": session.Flashes(),
+			"flash": sessionStore.Flashes(),
 			"user":  user,
 		})
-		session.Save()
+		sessionStore.Save()
 		return
 	}
 
@@ -113,12 +114,12 @@ func signup(c *gin.Context) {
 	if err != nil {
 		msg := err.(awserr.Error).Message()
 		log.Error("SignUp error: ", msg)
-		session.AddFlash(msg)
+		sessionStore.AddFlash(msg)
 		c.HTML(http.StatusOK, "signup.html", gin.H{
-			"flash": session.Flashes(),
+			"flash": sessionStore.Flashes(),
 			"user":  user,
 		})
-		session.Save()
+		sessionStore.Save()
 		return
 	}
 
@@ -134,22 +135,44 @@ func signup(c *gin.Context) {
 
 	user.ID = sub // Set user ID to Cognito UUID
 
-	if err := db.Create(user); err.Error != nil {
-		log.Error("Error:", err.Error)
-		session.AddFlash(err.Error)
+	av, err := dynamodbattribute.MarshalMap(user)
+
+	if err != nil {
+		log.Errorf("failed to DynamoDB marshal Record, %v", err)
+		sessionStore.AddFlash(err)
 		c.HTML(http.StatusOK, "signup.html", gin.H{
-			"flash": session.Flashes(),
+			"flash": sessionStore.Flashes(),
+			"user":  user,
+		})
+
+		c.Redirect(http.StatusFound, "/photos")
+		sessionStore.Save()
+		return
+	}
+
+	svc := NewDynamoDb()
+
+	_, err = svc.PutItem(&dynamodb.PutItemInput{
+		TableName: aws.String("PhotoAppUsers"),
+		Item: av,
+	})
+
+	if err != nil {
+		log.Errorf("Error: %v", err)
+		sessionStore.AddFlash(err)
+		c.HTML(http.StatusOK, "signup.html", gin.H{
+			"flash": sessionStore.Flashes(),
 			"user":  user,
 		})
 	} else {
 		log.Info("Saving userid in session for: ", user.Username)
-		session.Set(userKey, user.ID)
-		session.Set(accessToken, jwt)
-		session.Save()
+		sessionStore.Set(userKey, user.ID)
+		sessionStore.Set(accessToken, jwt)
+		sessionStore.Save()
 		c.Redirect(http.StatusFound, "/photos")
 	}
 
-	session.Save()
+	sessionStore.Save()
 }
 
 func logout(c *gin.Context) {
@@ -163,24 +186,49 @@ func logout(c *gin.Context) {
 // Profile shows the user profile
 // GET /user/:username
 func Profile(c *gin.Context) {
-	user := &user{Username: c.Params.ByName("username")}
+	username := c.Params.ByName("username")
+	user, err := findUserByUsername(username)
 
-	if err := db.Where(&user).First(&user); err.Error != nil {
+	if err != nil {
 		log.Error("Error:", err.Error)
+		c.HTML(http.StatusOK, "404.html", nil)
+		return
+	}
+
+	queryInput := &dynamodb.QueryInput{
+		TableName: aws.String("PhotosAppPhotos"),
+		KeyConditions: map[string]*dynamodb.Condition{
+			"UserID" : {
+				ComparisonOperator: aws.String("EQ"),
+				AttributeValueList: []*dynamodb.AttributeValue{
+					{
+						S: aws.String(user.ID),
+					},
+				},
+			},
+		},
+		IndexName: aws.String("UserID-index"),
+	}
+
+	svc := NewDynamoDb()
+	qo, err := svc.Query(queryInput)
+	if err != nil {
+		log.Errorf("Error: %v", err)
 		c.HTML(http.StatusOK, "404.html", nil)
 		return
 	}
 
 	photos := []photo{}
-
-	if err := db.Where("user_id = ?", user.ID).Order("id desc").Find(&photos); err.Error != nil {
-		log.Error("Error:", err.Error)
+	// deserialize items into photos list variable
+	err = dynamodbattribute.UnmarshalListOfMaps(qo.Items, &photos)
+	if err != nil {
+		log.Errorf("failed to unmarshal Query result items, %v", err)
 		c.HTML(http.StatusOK, "404.html", nil)
 		return
 	}
 
-	session := sessions.Default(c)
-	uid := session.Get(userKey)
+	sessionStore := sessions.Default(c)
+	uid := sessionStore.Get(userKey)
 	currentUser, _ := findUserByID(uid.(string))
 
 	c.HTML(http.StatusOK, "user.html", gin.H{
@@ -193,14 +241,53 @@ func Profile(c *gin.Context) {
 
 func findUserByUsername(username string) (*user, error) {
 
-	svc := NewDynamoDb()
-	qo, err := svc.QueryWhereFieldEquals("PhotosAppUsers", "Username", username)
+	sess := NewAwsSession()
+	svc := dynamodb.New(sess)
+
+	queryInput := &dynamodb.QueryInput{
+		TableName: aws.String("PhotosAppUsers"),
+		Limit: aws.Int64(1),
+		KeyConditions: map[string]*dynamodb.Condition{
+			"Username": {
+				ComparisonOperator: aws.String("EQ"),
+				AttributeValueList: []*dynamodb.AttributeValue{
+					{
+						S: aws.String(username),
+					},
+				},
+			},
+		},
+		IndexName: aws.String("Username-index"),
+	}
+
+	qo, err := svc.Query(queryInput)
+
 	return findUserHelper(qo, err)
 }
 
 func findUserByID(id string) (*user, error) {
-	svc := NewDynamoDb()
-	qo, err := svc.QueryWhereFieldEquals("PhotosAppUsers", "ID", id)
+	sess := NewAwsSession()
+	svc := dynamodb.New(sess)
+
+	queryInput := &dynamodb.QueryInput{
+		TableName: aws.String("PhotosAppUsers"),
+		Limit: aws.Int64(1),
+		KeyConditions: map[string]*dynamodb.Condition{
+			"ID": {
+				ComparisonOperator: aws.String("EQ"),
+				AttributeValueList: []*dynamodb.AttributeValue{
+					{
+						S: aws.String(id),
+					},
+				},
+			},
+		},
+		IndexName: aws.String("Username-index"),
+	}
+
+	qo, err := svc.Query(queryInput)
+
+	return findUserHelper(qo, err)
 	return findUserHelper(qo, err)
 }
 
@@ -225,15 +312,33 @@ func findUserHelper(qo *dynamodb.QueryOutput, err error) (*user, error) {
 }
 
 func (u *user) PhotoCount() uint {
-
-	photos := []photo{}
-	var count uint
-
-	if err := db.Where("user_id = ?", u.ID).Find(&photos).Count(&count); err.Error != nil {
-		log.Error("Error:", err.Error)
+	queryInput := &dynamodb.QueryInput{
+		TableName: aws.String("PhotosAppPhotos"),
+		Select: aws.String("COUNT"),
+		KeyConditions: map[string]*dynamodb.Condition{
+			"UserID" : {
+				ComparisonOperator: aws.String("EQ"),
+				AttributeValueList: []*dynamodb.AttributeValue{
+					{
+						S: aws.String(u.ID),
+					},
+				},
+			},
+		},
+		IndexName: aws.String("UserID-index"),
 	}
 
-	return count
+	svc := NewDynamoDb()
+	qo, err := svc.Query(queryInput)
+
+	if err != nil {
+		log.Errorf("Error getting photo count: %v", err)
+		return 0
+	}
+
+	count := aws.Int64Value(qo.Count)
+
+	return uint(count)
 }
 
 // Follow inserts a record into the followers table

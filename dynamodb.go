@@ -9,7 +9,7 @@ type DynamoDB struct {
 	svc *dynamodb.DynamoDB
 }
 
-func NewDynamoDb() DynamoDB {
+func New() DynamoDB {
 	sess := NewAwsSession()
 	svc := dynamodb.New(sess)
 	return DynamoDB{svc}
@@ -32,9 +32,4 @@ func (d DynamoDB) QueryWhereFieldEquals(tableName string, field string, value st
 	}
 
 	return d.svc.Query(queryInput)
-}
-
-func (d DynamoDB) AddItem()
-{
-
 }

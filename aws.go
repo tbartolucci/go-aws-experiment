@@ -4,6 +4,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
 
 func NewAwsSession() *session.Session {
@@ -13,4 +14,10 @@ func NewAwsSession() *session.Session {
 	}))
 
 	return sess
+}
+
+func NewDynamoDb() *dynamodb.DynamoDB {
+	sess := NewAwsSession()
+	svc := dynamodb.New(sess)
+	return svc
 }
