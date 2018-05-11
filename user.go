@@ -352,8 +352,22 @@ func Follow(c *gin.Context) {
 		FollowerID: uid.(string),
 	}
 
-	if err := db.Create(follower); err.Error != nil {
-		log.Error("Error:", err.Error)
+	av, err := dynamodbattribute.MarshalMap(follower)
+	if err != nil {
+		log.Errorf("failed to DynamoDB marshal Record, %v", err)
+	}
+
+	svc := NewDynamoDb()
+
+	_, err = svc.PutItem(&dynamodb.PutItemInput{
+		TableName: aws.String("PhotosAppUsers"),
+		Item: av,
+	})
+
+	if err != nil {
+		log.Errorf("failed to put record to DynamoDB, %v", err)
+		c.JSON(http.StatusInternalServerError, nil)
+		return
 	}
 
 	c.JSON(http.StatusOK, nil)
@@ -361,8 +375,8 @@ func Follow(c *gin.Context) {
 
 // Unfollow deletes a record from the followers table
 func Unfollow(c *gin.Context) {
-	session := sessions.Default(c)
-	uid := session.Get(userKey)
+	sessionStore := sessions.Default(c)
+	uid := sessionStore.Get(userKey)
 	fid := c.Params.ByName("id")
 
 	follower := &follower{
@@ -370,8 +384,24 @@ func Unfollow(c *gin.Context) {
 		FollowerID: uid.(string),
 	}
 
-	if err := db.Where(&follower).Delete(follower); err.Error != nil {
-		log.Error("Error:", err.Error)
+	// Delete follower from DynamoDB
+
+	av, err := dynamodbattribute.MarshalMap(follower)
+
+	if err != nil {
+		log.Errorf("failed to DynamoDB marshal Record, %v", err)
+	}
+
+	svc := NewDynamoDb()
+
+	_, err = svc.DeleteItem(&dynamodb.DeleteItemInput{
+		TableName: aws.String("PhotosAppUsers"),
+		Key:       av,
+	})
+
+	if err != nil {
+		log.Errorf("failed to delete record from DynamoDB, %v", err)
+		c.JSON(http.StatusInternalServerError, nil)
 	}
 
 	c.JSON(http.StatusOK, nil)
@@ -379,39 +409,104 @@ func Unfollow(c *gin.Context) {
 
 func (u *user) Followers() uint {
 
-	followers := []follower{}
-	var count uint
-
-	if err := db.Where("user_id = ?", u.ID).Find(&followers).Count(&count); err.Error != nil {
-		log.Error("Error:", err.Error)
+	queryInput := &dynamodb.QueryInput{
+		TableName: aws.String("PhotosAppFollowers"),
+		Select:    aws.String("COUNT"),
+		KeyConditions: map[string]*dynamodb.Condition{
+			"UserID": {
+				ComparisonOperator: aws.String("EQ"),
+				AttributeValueList: []*dynamodb.AttributeValue{
+					{
+						S: aws.String(u.ID),
+					},
+				},
+			},
+		},
 	}
 
-	return count
+	svc := NewDynamoDb()
+
+	qo, err := svc.Query(queryInput)
+
+	if err != nil {
+		log.Errorf("Error getting follower count: %v", err)
+		return 0
+	}
+
+	count := aws.Int64Value(qo.Count)
+
+	return uint(count)
 }
 
 func (u *user) Following() uint {
 
-	followers := []follower{}
-	var count uint
-
-	if err := db.Where("follower_id = ?", u.ID).Find(&followers).Count(&count); err.Error != nil {
-		log.Error("Error:", err.Error)
+	queryInput := &dynamodb.QueryInput{
+		TableName: aws.String("PhotosAppFollowers"),
+		Select:    aws.String("COUNT"),
+		KeyConditions: map[string]*dynamodb.Condition{
+			"FollowerID": {
+				ComparisonOperator: aws.String("EQ"),
+				AttributeValueList: []*dynamodb.AttributeValue{
+					{
+						S: aws.String(u.ID),
+					},
+				},
+			},
+		},
+		IndexName: aws.String("FollowerID-index"),
 	}
 
-	return count
+	svc := NewDynamoDb()
+
+	qo, err := svc.Query(queryInput)
+
+	if err != nil {
+		log.Errorf("Error getting following count: %v", err)
+		return 0
+	}
+
+	count := aws.Int64Value(qo.Count)
+
+	return uint(count)
 }
 
 // Follows returns true if the user (u) follows the userid
 func (u *user) Follows(userid string) bool {
 
-	follower := &follower{
-		UserID:     userid,
-		FollowerID: u.ID,
+	queryInput := &dynamodb.QueryInput{
+		TableName: aws.String("PhotosAppFollowers"),
+		Select:    aws.String("COUNT"),
+
+		KeyConditions: map[string]*dynamodb.Condition{
+			"FollowerID": {
+				ComparisonOperator: aws.String("EQ"),
+				AttributeValueList: []*dynamodb.AttributeValue{
+					{
+						S: aws.String(u.ID),
+					},
+				},
+			},
+			"UserID": {
+				ComparisonOperator: aws.String("EQ"),
+				AttributeValueList: []*dynamodb.AttributeValue{
+					{
+						S: aws.String(userid),
+					},
+				},
+			},
+		},
 	}
 
-	if err := db.Where(&follower).Find(&follower); err.Error != nil {
-		log.Error("Error:", err.Error)
+	svc := NewDynamoDb()
+
+	qo, err := svc.Query(queryInput)
+
+	if err != nil {
+		log.Errorf("Error getting follows count: %v", err)
+		return false
 	}
 
-	return true
+	count := aws.Int64Value(qo.Count)
+
+	return count > 0
 }

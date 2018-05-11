@@ -1,20 +1,23 @@
 package main
 
 import (
-	"log"
+	log "github.com/Sirupsen/logrus"
 	"time"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/aws"
 )
 
 type comment struct {
-	ID        uint
 	UserID    string
-	PhotoID   uint
+	PhotoID   string
 	Text      string
 	CreatedAt time.Time
 }
 
 // InsertComment inserts a comment record
-func InsertComment(photoid uint, userid string, text string) (uint, error) {
+func insertComment(photoid string, userid string, text string) error {
 	comment := &comment{
 		Text:      text,
 		PhotoID:   photoid,
@@ -22,13 +25,64 @@ func InsertComment(photoid uint, userid string, text string) (uint, error) {
 		CreatedAt: time.Now(),
 	}
 
-	if err := db.Create(comment); err.Error != nil {
-		return 0, err.Error
+	av, err := dynamodbattribute.MarshalMap(comment)
+
+	if err != nil {
+		log.Errorf("failed to DynamoDB marshal Record, %v", err)
+		return err
 	}
 
-	log.Println("Inserted comment record:", comment.ID)
+	sess := session.Must(session.NewSession())
+	svc := dynamodb.New(sess)
 
-	return comment.ID, nil
+	_, err = svc.PutItem(&dynamodb.PutItemInput{
+		TableName: aws.String("PhotosAppComments"),
+		Item:      av,
+	})
+
+	if err != nil {
+		log.Errorf("Failed to put Record to DynamoDB, %v", err)
+		return err
+	}
+
+	log.Println("Inserted comment record")
+
+	return nil
+}
+
+// findCommentsByPhoto gets all comments for a photo
+func findCommentsByPhoto(photoid string) ([]comment, error) {
+	sess := session.Must(session.NewSession())
+	svc := dynamodb.New(sess)
+
+	queryInput := &dynamodb.QueryInput{
+		TableName: aws.String("PhotosAppComments"),
+		KeyConditions: map[string]*dynamodb.Condition{
+			"PhotoID": {
+				ComparisonOperator: aws.String("EQ"),
+				AttributeValueList: []*dynamodb.AttributeValue{
+					{
+						S: aws.String(photoid),
+					},
+				},
+			},
+		},
+		ScanIndexForward: aws.Bool(false), // Primary sort key CreatedAt
+	}
+
+	qo, err := svc.Query(queryInput)
+
+	if err != nil {
+		return nil, err
+	}
+
+	comments := []comment{}
+	if err := dynamodbattribute.UnmarshalListOfMaps(qo.Items, &comments); err != nil {
+		log.Errorf("Failed to unmarshal Query result items, %v", err)
+		return nil, err
+	}
+
+	return comments, nil
 }
 
 func (c *comment) Username() string {

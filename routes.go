@@ -42,7 +42,6 @@ func registerRoutes() *gin.Engine {
 		photos.POST("/", CreatePhoto)
 		photos.GET("/", FetchAllPhotos)
 		photos.GET("/:id", FetchSinglePhoto)
-		photos.PUT("/:id", UpdatePhoto)
 		photos.DELETE("/:id", DeletePhoto)
 		photos.POST("/:id/like", LikePhoto)
 		photos.POST("/:id/comment", CommentPhoto)

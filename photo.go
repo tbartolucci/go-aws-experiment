@@ -7,7 +7,6 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -15,17 +14,20 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/nfnt/resize"
+	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/viper"
 
 	"github.com/aws/aws-sdk-go/aws"
-	awsSession "github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
 type photo struct {
-	ID        uint
-	UserID    string `sql:"type:varchar(36);primary key"` // Cognito UUID
+	ID        string
+	UserID    string
 	Filename  string
 	Caption   string
 	CreatedAt time.Time
@@ -56,8 +58,8 @@ func init() {
 
 // FetchAllPhotos gets all photos for all users
 func FetchAllPhotos(c *gin.Context) {
-	session := sessions.Default(c)
-	uid := session.Get(userKey)
+	sessionStore := sessions.Default(c)
+	uid := sessionStore.Get(userKey)
 
 	if uid == nil {
 		c.AbortWithStatus(http.StatusNotFound)
@@ -70,8 +72,23 @@ func FetchAllPhotos(c *gin.Context) {
 		log.Error("Could not find user:", err)
 	}
 
+	scanInput := &dynamodb.ScanInput{
+		TableName: aws.String("PhotosAppPhotos"),
+	}
+
+	sess := session.Must(session.NewSession())
+	svc := dynamodb.New(sess)
+
+	so, err := svc.Scan(scanInput)
+	if err != nil {
+		log.Errorf("Error querying PhotosAppPhotos: %v", err)
+	}
+
 	photos := []photo{}
-	db.Order("id desc").Find(&photos)
+	err = dynamodbattribute.UnmarshalListOfMaps(so.Items, &photos)
+	if err != nil {
+		log.Errorf("failed to unmarshal Query result items, %v", err)
+	}
 
 	currentUser, _ := findUserByID(uid.(string))
 
@@ -84,18 +101,53 @@ func FetchAllPhotos(c *gin.Context) {
 
 // FetchSinglePhoto gets a single photo by ID
 func FetchSinglePhoto(c *gin.Context) {
-	session := sessions.Default(c)
-	uid := session.Get(userKey)
+	sessionStore := sessions.Default(c)
+	uid := sessionStore.Get(userKey)
 
 	if uid == nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
 
-	// Load single photo
 	id := c.Params.ByName("id")
-	photo := &photo{}
-	db.Where("id = ?", id).Find(photo)
+
+	queryInput := &dynamodb.QueryInput{
+		TableName: aws.String("PhotosAppPhotos"),
+		Limit:     aws.Int64(1),
+		KeyConditions: map[string]*dynamodb.Condition{
+			"ID": {
+				ComparisonOperator: aws.String("EQ"),
+				AttributeValueList: []*dynamodb.AttributeValue{
+					{
+						S: aws.String(id),
+					},
+				},
+			},
+		},
+	}
+
+	sess := session.Must(session.NewSession())
+	svc := dynamodb.New(sess)
+
+	qo, err := svc.Query(queryInput)
+	if err != nil {
+		fmt.Printf("Error querying single photo: %v", err)
+	}
+
+	photos := []photo{}
+	err = dynamodbattribute.UnmarshalListOfMaps(qo.Items, &photos)
+	if err != nil {
+		fmt.Printf("failed to unmarshal Query result items, %v", err)
+	}
+
+	if len(photos) == 0 {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+
+	photo := photos[0]
+
+	log.Debug("Photo: ", photo)
 
 	// Load user info
 	user, err := findUserByID(photo.UserID)
@@ -105,10 +157,9 @@ func FetchSinglePhoto(c *gin.Context) {
 	}
 
 	// Load comments
-	comments := []comment{}
-	db.Where("photo_id = ?", id).Find(&comments)
 
-	currentUser, _ := findUserByID(uid.(string))
+	comments, err := findCommentsByPhoto(photo.ID)
+	currentUser, _ := findUserByID(photo.UserID)
 
 	c.HTML(http.StatusOK, "photo.html", gin.H{
 		"user":        user,
@@ -122,10 +173,10 @@ func FetchSinglePhoto(c *gin.Context) {
 // metadata in the database.
 func CreatePhoto(c *gin.Context) {
 
-	session := sessions.Default(c)
-	jwt := session.Get(accessToken)
+	sessionStore := sessions.Default(c)
+	jwt := sessionStore.Get(accessToken)
 	cog := NewCognito()
-	sub, _ := cog.ValidateToken(jwt.(string))
+	sub, err := cog.ValidateToken(jwt.(string))
 
 	if err != nil {
 		c.String(http.StatusBadRequest, fmt.Sprintf("Could not find user: %s", sub))
@@ -153,7 +204,7 @@ func CreatePhoto(c *gin.Context) {
 
 	// Upload file to S3 bucket
 
-	sess := NewAwsSession()
+	sess := session.Must(session.NewSession())
 	uploader := s3manager.NewUploader(sess)
 
 	key := sub + "/" + header.Filename
@@ -191,38 +242,69 @@ func CreatePhoto(c *gin.Context) {
 		return
 	}
 
-	c.Redirect(http.StatusFound, fmt.Sprintf("/photos/%d", photoid))
-}
-
-// UpdatePhoto updates a single photo by ID
-func UpdatePhoto(c *gin.Context) {
-
+	c.Redirect(http.StatusFound, fmt.Sprintf("/photos/%s", photoid))
 }
 
 // DeletePhoto deletes a single photo by ID
 func DeletePhoto(c *gin.Context) {
-	id := c.Params.ByName("id")
-	var p photo
 
-	if err := db.Where("id = ?", id).Delete(&p).Error; err != nil {
-		log.Error("Error deleting photo:", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err})
+	id := c.Params.ByName("id")
+
+	sess := session.Must(session.NewSession())
+	svc := dynamodb.New(sess)
+
+	_, err := svc.DeleteItem(&dynamodb.DeleteItemInput{
+		TableName: aws.String("PhotosAppPhotos"),
+		Key: map[string]*dynamodb.AttributeValue{
+			"ID": {S: aws.String(id)},
+		},
+	})
+
+	if err != nil {
+		log.Errorf("failed to delete record from DynamoDB, %v", err)
+		c.JSON(http.StatusInternalServerError, nil)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"id": id})
+	c.JSON(http.StatusOK, nil)
 }
 
 // LikePhoto increments the 'Likes' count
 func LikePhoto(c *gin.Context) {
-	photoid := c.Params.ByName("id")
-	photo := &photo{}
-	db.Where("id = ?", photoid).Find(photo)
+	id := c.Params.ByName("id")
 
-	photo.Likes++
+	log.Info("Liking photo: ", id)
 
-	if err := db.Save(photo); err.Error != nil {
-		log.Error("Error updating photo:", err.Error)
+	sess := session.Must(session.NewSession())
+	svc := dynamodb.New(sess)
+
+	result, err := svc.UpdateItem(&dynamodb.UpdateItemInput{
+		TableName: aws.String("PhotosAppPhotos"),
+		Key: map[string]*dynamodb.AttributeValue{
+			"ID": {S: aws.String(id)},
+		},
+		UpdateExpression: aws.String("set Likes = Likes + :num"),
+		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+			":num": {
+				N: aws.String("1"),
+			},
+		},
+		ReturnValues: aws.String("UPDATED_NEW"),
+	})
+
+	if err != nil {
+		log.Errorf("failed to increment PhotosAppPhotos Likes, %v", err)
+		c.JSON(http.StatusInternalServerError, nil)
+		return
+	}
+
+	photo := photo{}
+	err = dynamodbattribute.UnmarshalMap(result.Attributes, &photo)
+
+	if err != nil {
+		log.Errorf("Unable to unmarshal response, %v", err)
+		c.JSON(http.StatusInternalServerError, nil)
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"likes": photo.Likes})
@@ -231,7 +313,7 @@ func LikePhoto(c *gin.Context) {
 // CommentPhoto adds a comment to a photo
 func CommentPhoto(c *gin.Context) {
 
-	photoid, _ := strconv.ParseUint(c.Params.ByName("id"), 10, 64)
+	id := c.Params.ByName("id")
 
 	var comment struct {
 		Comment string `json:"comment"`
@@ -243,9 +325,9 @@ func CommentPhoto(c *gin.Context) {
 
 	log.Printf("Comment: %v\n", comment.Comment)
 
-	session := sessions.Default(c)
-	uid := session.Get(userKey)
-	id, err := InsertComment(uint(photoid), uid.(string), comment.Comment)
+	sessionStore := sessions.Default(c)
+	uid := sessionStore.Get(userKey)
+	err := insertComment(id, uid.(string), comment.Comment)
 
 	if err != nil {
 		log.Error("Error inserting comment:", err.Error())
@@ -253,29 +335,46 @@ func CommentPhoto(c *gin.Context) {
 
 	user, _ := findUserByID(uid.(string))
 
-	c.JSON(http.StatusOK, gin.H{"id": id, "username": user.Username})
+	c.JSON(http.StatusOK, gin.H{"username": user.Username})
 }
 
 // Insert photo record into database
-func insertPhoto(uid string, fn string, caption string) (uint, error) {
+func insertPhoto(uid string, fn string, caption string) (string, error) {
+
+	id := uuid.Must(uuid.NewV4()).String()
 
 	photo := &photo{
+		ID:        id,
 		UserID:    uid,
 		Filename:  fn,
 		Caption:   caption,
 		CreatedAt: time.Now(),
 	}
 
-	if err := db.Create(photo); err.Error != nil {
-		return 0, err.Error
+	av, err := dynamodbattribute.MarshalMap(photo)
+
+	if err != nil {
+		log.Errorf("failed to DynamoDB marshal Record, %v", err)
 	}
 
-	log.Info("Inserted photo record:", photo.ID)
+	sess := session.Must(session.NewSession())
+	svc := dynamodb.New(sess)
 
-	return photo.ID, nil
+	_, err = svc.PutItem(&dynamodb.PutItemInput{
+		TableName: aws.String("PhotosAppPhotos"),
+		Item:      av,
+	})
+
+	if err != nil {
+		log.Errorf("failed to put Record to DynamoDB, %v", err)
+	}
+
+	log.Info("Inserted photo record:", id)
+
+	return id, nil
 }
 
-func generateThumbnail(sess *awsSession.Session, sub string, filename string, key string, maxWidth uint) error {
+func generateThumbnail(sess *session.Session, sub string, filename string, key string, maxWidth uint) error {
 
 	log.Infof("Fetching s3://%v/%v", bucketName, key)
 
