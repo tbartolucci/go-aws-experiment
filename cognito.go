@@ -193,10 +193,10 @@ func (c *Cognito) ValidateToken(jwtToken string) (string, error) {
 
 	token, err := jwt.Parse(jwtToken, c.getKey)
 	if err != nil {
-		return "", fmt.Errorf("Could not parse JWT: %v", err)
+		return "", fmt.Errorf("could not parse JWT: %v", err)
 	}
 
-	log.Debug("JWT signature: ", token.Signature)
+	log.Info("JWT signature: ", token.Signature)
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
 		if claims["token_use"] != "access" {

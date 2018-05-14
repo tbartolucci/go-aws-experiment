@@ -128,6 +128,7 @@ func signup(c *gin.Context) {
 	sub, err := cog.ValidateToken(jwt)
 
 	if err != nil {
+		log.Error("Validate Token error: %v", err)
 		return
 	}
 
@@ -149,11 +150,11 @@ func signup(c *gin.Context) {
 		sessionStore.Save()
 		return
 	}
-
+	log.Info("Marshalled DB user:", user.Username)
 	svc := NewDynamoDb()
 
 	_, err = svc.PutItem(&dynamodb.PutItemInput{
-		TableName: aws.String("PhotoAppUsers"),
+		TableName: aws.String(usersTable),
 		Item: av,
 	})
 
@@ -196,7 +197,7 @@ func Profile(c *gin.Context) {
 	}
 
 	queryInput := &dynamodb.QueryInput{
-		TableName: aws.String("PhotosAppPhotos"),
+		TableName: aws.String(photosTable),
 		KeyConditions: map[string]*dynamodb.Condition{
 			"UserID" : {
 				ComparisonOperator: aws.String("EQ"),
@@ -207,7 +208,7 @@ func Profile(c *gin.Context) {
 				},
 			},
 		},
-		IndexName: aws.String("UserID-index"),
+		IndexName: aws.String(userIdIndex),
 	}
 
 	svc := NewDynamoDb()
@@ -245,7 +246,7 @@ func findUserByUsername(username string) (*user, error) {
 	svc := dynamodb.New(sess)
 
 	queryInput := &dynamodb.QueryInput{
-		TableName: aws.String("PhotosAppUsers"),
+		TableName: aws.String(usersTable),
 		Limit: aws.Int64(1),
 		KeyConditions: map[string]*dynamodb.Condition{
 			"Username": {
@@ -257,12 +258,12 @@ func findUserByUsername(username string) (*user, error) {
 				},
 			},
 		},
-		IndexName: aws.String("Username-index"),
+		IndexName: aws.String(usernameIndex),
 	}
 
 	qo, err := svc.Query(queryInput)
 
-	return findUserHelper(qo, err)
+	return findUserHelper("findUserByUsername", qo, err)
 }
 
 func findUserByID(id string) (*user, error) {
@@ -270,7 +271,7 @@ func findUserByID(id string) (*user, error) {
 	svc := dynamodb.New(sess)
 
 	queryInput := &dynamodb.QueryInput{
-		TableName: aws.String("PhotosAppUsers"),
+		TableName: aws.String(usersTable),
 		Limit: aws.Int64(1),
 		KeyConditions: map[string]*dynamodb.Condition{
 			"ID": {
@@ -282,24 +283,22 @@ func findUserByID(id string) (*user, error) {
 				},
 			},
 		},
-		IndexName: aws.String("Username-index"),
 	}
 
 	qo, err := svc.Query(queryInput)
 
-	return findUserHelper(qo, err)
-	return findUserHelper(qo, err)
+	return findUserHelper("findUserByID", qo, err)
 }
 
-func findUserHelper(qo *dynamodb.QueryOutput, err error) (*user, error) {
+func findUserHelper(caller string, qo *dynamodb.QueryOutput, err error) (*user, error) {
 	if err != nil {
-		log.Errorf("FindUserByUsername failed: %v", err)
+		log.Errorf("%s failed: %v", caller, err)
 		return nil, err
 	}
 
 	users := []user{}
 	if err := dynamodbattribute.UnmarshalListOfMaps(qo.Items, &users); err != nil {
-		log.Errorf("Failed to unmarshal Query result items, %v", err)
+		log.Errorf("%s: Failed to unmarshal Query result items, %v", caller, err)
 		return nil, err
 	}
 
@@ -313,7 +312,7 @@ func findUserHelper(qo *dynamodb.QueryOutput, err error) (*user, error) {
 
 func (u *user) PhotoCount() uint {
 	queryInput := &dynamodb.QueryInput{
-		TableName: aws.String("PhotosAppPhotos"),
+		TableName: aws.String(photosTable),
 		Select: aws.String("COUNT"),
 		KeyConditions: map[string]*dynamodb.Condition{
 			"UserID" : {
@@ -325,7 +324,7 @@ func (u *user) PhotoCount() uint {
 				},
 			},
 		},
-		IndexName: aws.String("UserID-index"),
+		IndexName: aws.String(userIdIndex),
 	}
 
 	svc := NewDynamoDb()
@@ -360,7 +359,7 @@ func Follow(c *gin.Context) {
 	svc := NewDynamoDb()
 
 	_, err = svc.PutItem(&dynamodb.PutItemInput{
-		TableName: aws.String("PhotosAppUsers"),
+		TableName: aws.String(usersTable),
 		Item: av,
 	})
 
@@ -395,7 +394,7 @@ func Unfollow(c *gin.Context) {
 	svc := NewDynamoDb()
 
 	_, err = svc.DeleteItem(&dynamodb.DeleteItemInput{
-		TableName: aws.String("PhotosAppUsers"),
+		TableName: aws.String(usersTable),
 		Key:       av,
 	})
 
@@ -410,7 +409,7 @@ func Unfollow(c *gin.Context) {
 func (u *user) Followers() uint {
 
 	queryInput := &dynamodb.QueryInput{
-		TableName: aws.String("PhotosAppFollowers"),
+		TableName: aws.String(followersTable),
 		Select:    aws.String("COUNT"),
 		KeyConditions: map[string]*dynamodb.Condition{
 			"UserID": {
@@ -441,7 +440,7 @@ func (u *user) Followers() uint {
 func (u *user) Following() uint {
 
 	queryInput := &dynamodb.QueryInput{
-		TableName: aws.String("PhotosAppFollowers"),
+		TableName: aws.String(followersTable),
 		Select:    aws.String("COUNT"),
 		KeyConditions: map[string]*dynamodb.Condition{
 			"FollowerID": {
@@ -453,7 +452,7 @@ func (u *user) Following() uint {
 				},
 			},
 		},
-		IndexName: aws.String("FollowerID-index"),
+		IndexName: aws.String(followerIdIndex),
 	}
 
 	svc := NewDynamoDb()
@@ -474,7 +473,7 @@ func (u *user) Following() uint {
 func (u *user) Follows(userid string) bool {
 
 	queryInput := &dynamodb.QueryInput{
-		TableName: aws.String("PhotosAppFollowers"),
+		TableName: aws.String(followersTable),
 		Select:    aws.String("COUNT"),
 
 		KeyConditions: map[string]*dynamodb.Condition{
