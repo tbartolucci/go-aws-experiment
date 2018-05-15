@@ -263,42 +263,14 @@ func findUserByUsername(username string) (*user, error) {
 
 	qo, err := svc.Query(queryInput)
 
-	return findUserHelper("findUserByUsername", qo, err)
-}
-
-func findUserByID(id string) (*user, error) {
-	sess := NewAwsSession()
-	svc := dynamodb.New(sess)
-
-	queryInput := &dynamodb.QueryInput{
-		TableName: aws.String(usersTable),
-		Limit: aws.Int64(1),
-		KeyConditions: map[string]*dynamodb.Condition{
-			"ID": {
-				ComparisonOperator: aws.String("EQ"),
-				AttributeValueList: []*dynamodb.AttributeValue{
-					{
-						S: aws.String(id),
-					},
-				},
-			},
-		},
-	}
-
-	qo, err := svc.Query(queryInput)
-
-	return findUserHelper("findUserByID", qo, err)
-}
-
-func findUserHelper(caller string, qo *dynamodb.QueryOutput, err error) (*user, error) {
 	if err != nil {
-		log.Errorf("%s failed: %v", caller, err)
+		log.Errorf("findUserByUsername failed: %v", err)
 		return nil, err
 	}
 
 	users := []user{}
 	if err := dynamodbattribute.UnmarshalListOfMaps(qo.Items, &users); err != nil {
-		log.Errorf("%s: Failed to unmarshal Query result items, %v", caller, err)
+		log.Errorf("findUserByUsername: Failed to unmarshal Query result items, %v", err)
 		return nil, err
 	}
 
@@ -308,6 +280,38 @@ func findUserHelper(caller string, qo *dynamodb.QueryOutput, err error) (*user, 
 	}
 
 	return &users[0], nil
+}
+
+func findUserByID(id string) (*user, error) {
+	sess := NewAwsSession()
+	svc := dynamodb.New(sess)
+
+	queryInput := &dynamodb.GetItemInput{
+		TableName: aws.String(usersTable),
+		Key: map[string]*dynamodb.AttributeValue{
+			"ID": {
+				S: aws.String(id),
+			},
+		},
+	}
+
+	result, err := svc.GetItem(queryInput)
+
+	if err != nil {
+		log.Errorf("findUserByID: GetItem failed, %v", err)
+		return nil, err
+	}
+
+	user := user{}
+
+	err = dynamodbattribute.UnmarshalMap(result.Item, &user)
+
+	if err != nil {
+		log.Errorf("findUserByID: Failed to unmarshal Record, %v", err)
+		return nil, err
+	}
+
+	return &user, nil
 }
 
 func (u *user) PhotoCount() uint {
