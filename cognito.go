@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-
 	log "github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/dgrijalva/jwt-go"
@@ -190,10 +189,9 @@ func (c *Cognito) SignIn(username string, password string) (string, error) {
 func (c *Cognito) ValidateToken(jwtToken string) (string, error) {
 
 	log.Info("ValidateToken: ", jwtToken)
-
 	token, err := jwt.Parse(jwtToken, c.getKey)
 	if err != nil {
-		return "", fmt.Errorf("could not parse JWT: %v", err)
+		return "", fmt.Errorf("JWT parse error: %v", err)
 	}
 
 	log.Info("JWT signature: ", token.Signature)
