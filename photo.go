@@ -10,11 +10,10 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	humanize "github.com/dustin/go-humanize"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/nfnt/resize"
-	uuid "github.com/satori/go.uuid"
+	"github.com/satori/go.uuid"
 	"github.com/spf13/viper"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -23,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/dustin/go-humanize"
 )
 
 type photo struct {
@@ -32,6 +32,10 @@ type photo struct {
 	Caption   string
 	CreatedAt time.Time
 	Likes     uint
+}
+
+func TimeAgo(p photo) string {
+	return humanize.Time(p.CreatedAt)
 }
 
 const thumbnailSize uint = 600
@@ -73,11 +77,10 @@ func FetchAllPhotos(c *gin.Context) {
 	}
 
 	scanInput := &dynamodb.ScanInput{
-		TableName: aws.String("PhotosAppPhotos"),
+		TableName: aws.String(photosTable),
 	}
 
-	sess := session.Must(session.NewSession())
-	svc := dynamodb.New(sess)
+	svc := NewDynamoDb()
 
 	so, err := svc.Scan(scanInput)
 	if err != nil {
@@ -112,7 +115,7 @@ func FetchSinglePhoto(c *gin.Context) {
 	id := c.Params.ByName("id")
 
 	queryInput := &dynamodb.QueryInput{
-		TableName: aws.String("PhotosAppPhotos"),
+		TableName: aws.String(photosTable),
 		Limit:     aws.Int64(1),
 		KeyConditions: map[string]*dynamodb.Condition{
 			"ID": {
@@ -126,8 +129,7 @@ func FetchSinglePhoto(c *gin.Context) {
 		},
 	}
 
-	sess := session.Must(session.NewSession())
-	svc := dynamodb.New(sess)
+	svc := NewDynamoDb()
 
 	qo, err := svc.Query(queryInput)
 	if err != nil {
@@ -164,6 +166,7 @@ func FetchSinglePhoto(c *gin.Context) {
 	c.HTML(http.StatusOK, "photo.html", gin.H{
 		"user":        user,
 		"photo":       photo,
+		"timeAgo" :    TimeAgo(photo),
 		"comments":    comments,
 		"CurrentUser": currentUser,
 	})
@@ -204,7 +207,7 @@ func CreatePhoto(c *gin.Context) {
 
 	// Upload file to S3 bucket
 
-	sess := session.Must(session.NewSession())
+	sess := NewAwsSession()
 	uploader := s3manager.NewUploader(sess)
 
 	key := sub + "/" + header.Filename
@@ -233,14 +236,14 @@ func CreatePhoto(c *gin.Context) {
 		return
 	}
 
-	//// Generate thumbnail
-	//
-	//err = generateThumbnail(sess, sub, header.Filename, key, thumbnailSize)
-	//
-	//if err != nil {
-	//	c.String(http.StatusBadRequest, fmt.Sprintf("Error generating thumbnail: %s", err.Error()))
-	//	return
-	//}
+	// Generate thumbnail
+
+	err = generateThumbnail(sess, sub, header.Filename, key, thumbnailSize)
+
+	if err != nil {
+		c.String(http.StatusBadRequest, fmt.Sprintf("Error generating thumbnail: %s", err.Error()))
+		return
+	}
 
 	c.Redirect(http.StatusFound, fmt.Sprintf("/photos/%s", photoid))
 }
@@ -250,11 +253,10 @@ func DeletePhoto(c *gin.Context) {
 
 	id := c.Params.ByName("id")
 
-	sess := session.Must(session.NewSession())
-	svc := dynamodb.New(sess)
+	svc := NewDynamoDb()
 
 	_, err := svc.DeleteItem(&dynamodb.DeleteItemInput{
-		TableName: aws.String("PhotosAppPhotos"),
+		TableName: aws.String(photosTable),
 		Key: map[string]*dynamodb.AttributeValue{
 			"ID": {S: aws.String(id)},
 		},
@@ -275,11 +277,10 @@ func LikePhoto(c *gin.Context) {
 
 	log.Info("Liking photo: ", id)
 
-	sess := session.Must(session.NewSession())
-	svc := dynamodb.New(sess)
+	svc := NewDynamoDb()
 
 	result, err := svc.UpdateItem(&dynamodb.UpdateItemInput{
-		TableName: aws.String("PhotosAppPhotos"),
+		TableName: aws.String(photosTable),
 		Key: map[string]*dynamodb.AttributeValue{
 			"ID": {S: aws.String(id)},
 		},
@@ -357,11 +358,10 @@ func insertPhoto(uid string, fn string, caption string) (string, error) {
 		log.Errorf("failed to DynamoDB marshal Record, %v", err)
 	}
 
-	sess := session.Must(session.NewSession())
-	svc := dynamodb.New(sess)
+	svc := NewDynamoDb()
 
 	_, err = svc.PutItem(&dynamodb.PutItemInput{
-		TableName: aws.String("PhotosAppPhotos"),
+		TableName: aws.String(photosTable),
 		Item:      av,
 	})
 
@@ -433,6 +433,3 @@ func generateThumbnail(sess *session.Session, sub string, filename string, key s
 	return nil
 }
 
-func (p *photo) TimeAgo() string {
-	return humanize.Time(p.CreatedAt)
-}

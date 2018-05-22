@@ -21,7 +21,7 @@ const commentsTable = "PhotosAppComments"
 func NewAwsSession() *session.Session {
 	sess := session.Must(session.NewSession(&aws.Config{
 		Region: aws.String("us-east-1"),
-		Credentials: credentials.NewSharedCredentials("", "default"),
+		Credentials: credentials.NewSharedCredentials("", "go-aws"),
 	}))
 
 	return sess
