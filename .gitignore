@@ -26,3 +26,5 @@ _testmain.go
 \.idea/
 node_modules/
 lambda/main
+
+terraform/secret\.vars\.tf
