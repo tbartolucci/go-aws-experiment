@@ -11,17 +11,18 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/nfnt/resize"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/aws/credentials"
 	"context"
 	"github.com/aws/aws-lambda-go/lambda"
-	"fmt"
 	"github.com/aws/aws-lambda-go/events"
 )
 
 func HandleRequest(ctx context.Context, event events.S3Event) {
+	//accessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
+	//secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 	sess := session.Must(session.NewSession(&aws.Config{
 		Region: aws.String("us-east-1"),
-		Credentials: credentials.NewSharedCredentials("", "go-aws"),
+		// Credentials: credentials.NewSharedCredentials("", "go-aws"),
+		//Credentials: credentials.NewStaticCredentials(accessKeyId, secretKey, ""),
 	}))
 
 	for _, record := range event.Records {
@@ -47,8 +48,8 @@ func HandleRequest(ctx context.Context, event events.S3Event) {
 		})
 
 		if err != nil {
-			message := fmt.Sprintf("Could not download from S3: %v", err)
-			log.Printf(message)
+			log.Printf("Could not download from S3: %v", err)
+			continue
 		}
 
 		log.Printf("Decoding image: %v bytes", len(buff.Bytes()))
@@ -58,16 +59,16 @@ func HandleRequest(ctx context.Context, event events.S3Event) {
 
 		img, err := jpeg.Decode(reader)
 		if err != nil {
-			message := fmt.Sprintf("bad response: %s", err)
-			log.Printf(message)
+			log.Printf("bad response: %s", err)
+			continue
 		}
 
 		log.Printf("Generating thumbnail")
 		thumbnail := resize.Thumbnail(600, 600, img, resize.Lanczos3)
 
 		if thumbnail == nil {
-			message := "resize.Thumbnail returned nil"
-			log.Printf(message)
+			log.Printf("resize.Thumbnail returned nil")
+			continue
 		}
 
 		log.Printf("Encoding image for upload to S3")
@@ -75,8 +76,8 @@ func HandleRequest(ctx context.Context, event events.S3Event) {
 		err = jpeg.Encode(buf, thumbnail, nil)
 
 		if err != nil {
-			message := fmt.Sprintf("JPEG encoding error: %v", err)
-			log.Printf(message)
+			log.Printf("JPEG encoding error: %v", err)
+			continue
 		}
 
 		// Filename: e5f97749-5d2f-4770-89ce-5d68b1a90f7b/filename.jpg
@@ -94,8 +95,8 @@ func HandleRequest(ctx context.Context, event events.S3Event) {
 		})
 
 		if err != nil {
-			message := fmt.Sprintf("Failed to upload: %v", err)
-			log.Printf(message)
+			log.Printf("Failed to upload: %v", err)
+			continue
 		}
 
 		log.Printf("Successfully uploaded to: %v", result.Location)
