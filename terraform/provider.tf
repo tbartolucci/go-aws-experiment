@@ -14,7 +14,7 @@ provider "aws" {
   region  = "us-east-1"
   access_key = "${var.aws_access_key}"
   secret_key = "${var.aws_secret_key}"
-  version = "~> 1.10.0"
+  version = "~> 1.16.0"
 }
 
 variable "region" {
