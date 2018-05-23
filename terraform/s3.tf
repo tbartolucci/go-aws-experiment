@@ -1,6 +1,7 @@
 resource "aws_s3_bucket" "bitsbybit-pluralsight-photos" {
   bucket = "bitsbybit-pluralsight-photos"
   acl    = "private"
+  force_destroy = "true"
   policy = <<POLICY
 {
   "Version": "2012-10-17",
@@ -19,5 +20,5 @@ POLICY
 resource "aws_s3_bucket" "bitsbybit-pluralsight-photos-lambda" {
   bucket = "bitsbybit-pluralsight-photos-lambda"
   acl    = "private"
+  force_destroy = "true"
 }
-
