@@ -1,18 +1,24 @@
-# Apex
+## Build Instructions
 
-Apex performs the following upon `apex init`:
+[AWS Lambda GO Build](https://github.com/aws/aws-lambda-go)
 
-* creating IAM PhotosApp_lambda_function role
-* creating IAM PhotosApp_lambda_logs policy
-* attaching policy to lambda_function r
+[AWS GO Lambda SDK](https://docs.aws.amazon.com/lambda/latest/dg/go-programming-model-handler-types.html)
 
-## Build
+### Build
 
-`apex -l debug build thumbnail > thumbnail.zip`
+In Powershell:
 
-## Deploy
+`$env:GOOS = "linux"`
 
-`apex deploy`
+`$env:GOARCH = "amd64"`
+
+ `go build -o main main.go`
+ 
+ `~\Go\Bin\build-lambda-zip.exe -o main.zip main`
+
+### Deploy
+
+
 
 ## Create Lambda Trigger
 
