@@ -238,12 +238,12 @@ func CreatePhoto(c *gin.Context) {
 
 	// Generate thumbnail
 
-	err = generateThumbnail(sess, sub, header.Filename, key, thumbnailSize)
-
-	if err != nil {
-		c.String(http.StatusBadRequest, fmt.Sprintf("Error generating thumbnail: %s", err.Error()))
-		return
-	}
+	//err = generateThumbnail(sess, sub, header.Filename, key, thumbnailSize)
+	//
+	//if err != nil {
+	//	c.String(http.StatusBadRequest, fmt.Sprintf("Error generating thumbnail: %s", err.Error()))
+	//	return
+	//}
 
 	c.Redirect(http.StatusFound, fmt.Sprintf("/photos/%s", photoid))
 }
