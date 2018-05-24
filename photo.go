@@ -236,15 +236,6 @@ func CreatePhoto(c *gin.Context) {
 		return
 	}
 
-	// Generate thumbnail
-
-	//err = generateThumbnail(sess, sub, header.Filename, key, thumbnailSize)
-	//
-	//if err != nil {
-	//	c.String(http.StatusBadRequest, fmt.Sprintf("Error generating thumbnail: %s", err.Error()))
-	//	return
-	//}
-
 	c.Redirect(http.StatusFound, fmt.Sprintf("/photos/%s", photoid))
 }
 
@@ -373,63 +364,3 @@ func insertPhoto(uid string, fn string, caption string) (string, error) {
 
 	return id, nil
 }
-
-func generateThumbnail(sess *session.Session, sub string, filename string, key string, maxWidth uint) error {
-
-	log.Infof("Fetching s3://%v/%v", bucketName, key)
-
-	buff := &aws.WriteAtBuffer{}
-	s3dl := s3manager.NewDownloader(sess)
-	_, err := s3dl.Download(buff, &s3.GetObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(key),
-	})
-
-	if err != nil {
-		log.Fatalf("Could not download from S3: %v", err)
-	}
-
-	log.Infof("Decoding image")
-
-	imageBytes := buff.Bytes()
-	reader := bytes.NewReader(imageBytes)
-
-	img, err := jpeg.Decode(reader)
-	if err != nil {
-		log.Fatalf("bad response: %s", err)
-	}
-
-	log.Infof("Generating thumbnail")
-	thumbnail := resize.Thumbnail(maxWidth, maxWidth, img, resize.Lanczos3)
-
-	log.Infof("Encoding image for upload to S3")
-	buf := new(bytes.Buffer)
-	err = jpeg.Encode(buf, thumbnail, nil)
-
-	if err != nil {
-		log.Errorf("JPEG encoding error: %v", err)
-		return err
-	}
-
-	thumbkey := sub + "/thumb/" + filename
-
-	log.Infof("Preparing S3 object: %s", thumbkey)
-
-	uploader := s3manager.NewUploader(sess)
-	result, err := uploader.Upload(&s3manager.UploadInput{
-		Body:        bytes.NewReader(buf.Bytes()),
-		Bucket:      aws.String(bucketName),
-		Key:         aws.String(thumbkey),
-		ContentType: aws.String(mime.TypeByExtension(filepath.Ext(filename))),
-	})
-
-	if err != nil {
-		log.Error("Failed to upload", err)
-		return err
-	}
-
-	log.Println("Successfully uploaded to", result.Location)
-
-	return nil
-}
-
